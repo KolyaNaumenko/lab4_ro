@@ -1,0 +1,185 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.Random;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+class Garden {
+    private int[][] plants;
+    private ReadWriteLock lock;
+
+    public Garden(int rows, int columns) {
+        plants = new int[rows][columns];
+        lock = new ReentrantReadWriteLock();
+    }
+
+    public void waterPlants() {
+        // Iterate over the garden and water the wilted plants
+        for (int i = 0; i < plants.length; i++) {
+            for (int j = 0; j < plants[i].length; j++) {
+                lock.writeLock().lock();
+                try {
+                    if (plants[i][j] == 0) {
+                        plants[i][j] = 1; // Set the plant state to healthy
+                    }
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            }
+        }
+    }
+
+    public void changePlantState() {
+        Random random = new Random();
+        // Iterate over the garden and randomly change the state of plants
+        for (int i = 0; i < plants.length; i++) {
+            for (int j = 0; j < plants[i].length; j++) {
+                lock.writeLock().lock();
+                try {
+                    plants[i][j] = random.nextInt(2); // Set the plant state to either 0 (wilted) or 1 (healthy)
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            }
+        }
+    }
+
+    public void outputGardenStateToFile(String filename) {
+        lock.readLock().lock();
+        try {
+            try (FileWriter writer = new FileWriter(filename, true)) {
+
+                writer.write("---------\n");
+
+                // Iterate over the garden and write the state of each plant to the file
+                for (int i = 0; i < plants.length; i++) {
+                    for (int j = 0; j < plants[i].length; j++) {
+                        writer.write(plants[i][j] + " ");
+                    }
+                    writer.write("\n");
+                }
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public void displayGardenState() {
+        lock.readLock().lock();
+        try {
+
+            System.out.print("---------\n");
+
+            // Iterate over the garden and display the state of each plant
+            for (int i = 0; i < plants.length; i++) {
+                for (int j = 0; j < plants[i].length; j++) {
+                    System.out.print(plants[i][j] + " ");
+                }
+                System.out.println();
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+}
+
+class StreamGardener extends Thread {
+    private Garden garden;
+
+    public StreamGardener(Garden garden) {
+        this.garden = garden;
+    }
+
+    @Override
+    public void run() {
+        while (true) {
+            garden.waterPlants();
+            try {
+                Thread.sleep(5000); // Sleep for 5 seconds before watering again
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+class FlowNature extends Thread {
+    private Garden garden;
+
+    public FlowNature(Garden garden) {
+        this.garden = garden;
+    }
+
+    @Override
+    public void run() {
+        while (true) {
+            garden.changePlantState();
+            try {
+                Thread.sleep(3000); // Sleep for 3 seconds before changing the state again
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+class StreamMonitor1 extends Thread {
+    private Garden garden;
+    private String filename;
+
+    public StreamMonitor1(Garden garden, String filename) {
+        this.garden = garden;
+        this.filename = filename;
+    }
+
+    @Override
+    public void run() {
+        while (true) {
+            garden.outputGardenStateToFile(filename);
+            try {
+                Thread.sleep(5000); // Sleep for 10 seconds before outputting again
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+class StreamMonitor2 extends Thread {
+    private Garden garden;
+
+    public StreamMonitor2(Garden garden) {
+        this.garden = garden;
+    }
+
+    @Override
+    public void run() {
+        while (true) {
+            garden.displayGardenState();
+            try {
+                Thread.sleep(5000); // Sleep for 7 seconds before displaying again
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Garden garden = new Garden(5, 5); // Create a garden with 5 rows and 5 columns
+
+        StreamGardener streamGardener = new StreamGardener(garden);
+        FlowNature flowNature = new FlowNature(garden);
+        StreamMonitor1 streamMonitor1 = new StreamMonitor1(garden, "garden_state.txt");
+        StreamMonitor2 streamMonitor2 = new StreamMonitor2(garden);
+
+        streamGardener.start();
+        flowNature.start();
+        streamMonitor1.start();
+        streamMonitor2.start();
+    }
+}
