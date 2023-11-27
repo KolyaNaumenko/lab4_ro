@@ -1,0 +1,248 @@
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+
+class Controller {
+    private int readersCount = 0;
+    private boolean writing = false;
+
+    public synchronized void readLock() throws InterruptedException {
+        while (writing) wait();
+        readersCount++;
+    }
+
+    public synchronized void readUnlock() {
+        if (readersCount <= 0) throw new IllegalMonitorStateException();
+        readersCount--;
+        if (readersCount == 0)
+            notifyAll();
+    }
+
+    public synchronized void writeLock() throws InterruptedException {
+        while (readersCount != 0) wait();
+        writing = true;
+    }
+
+    public synchronized void writeUnlock() {
+        if (!writing)
+            return;
+        writing = false;
+        notifyAll();
+    }
+}
+
+class DatabaseController {
+    private DatabaseFile database;
+    private static final String file = "database.txt"; // Corrected file path
+    private Controller readWriteLock = new Controller();
+
+    public DatabaseController(DatabaseFile database) {
+        this.database = database;
+    }
+
+    public void getPhoneNumbers(String username) {
+        try {
+            readWriteLock.readLock();
+            List<String> res = new ArrayList<>();
+            BufferedReader fileReader = new BufferedReader(new FileReader(file));
+            String line = fileReader.readLine();
+            while (line != null) {
+                if (line.substring(0, 1).equals(username)) // Adjusted substring indices
+                    res.add(line.substring(2));
+                line = fileReader.readLine();
+            }
+            System.out.println("Found Phone Number: " + res + " for user: " + username);
+            return;
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            readWriteLock.readUnlock();
+        }
+        System.out.println("Found no phone number for: " + username);
+    }
+
+    public void getUsername(String phoneNumber) {
+        try {
+            readWriteLock.readLock();
+            BufferedReader fileReader = new BufferedReader(new FileReader(file));
+            String line = fileReader.readLine();
+            while (line != null) {
+                if (line.substring(2).equals(phoneNumber)) {
+                    String user = line.substring(0, 1);
+                    System.out.println("Found Username: " + user + " by phone: " + phoneNumber);
+                    return;
+                }
+                line = fileReader.readLine();
+            }
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            readWriteLock.readUnlock();
+        }
+        System.out.println("Found no Username with phone: " + phoneNumber);
+    }
+
+    public void addRecord(String username, String phoneNumber) {
+        PrintWriter pw = null;
+        try {
+            readWriteLock.writeLock();
+            pw = new PrintWriter(new BufferedWriter(new FileWriter(file, true)));
+            pw.println(username + " " + phoneNumber);
+            System.out.println("Adding: " + username + " " + phoneNumber);
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            assert pw != null;
+            pw.close();
+            readWriteLock.writeUnlock();
+        }
+    }
+
+    public void deleteRecord(String username, String phoneNumber) {
+        try {
+            readWriteLock.writeLock();
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            String curr;
+            String remove = username + " " + phoneNumber;
+            int cnt = 0;
+            while ((curr = reader.readLine()) != null) {
+                String trimmedLine = curr.trim();
+                if (trimmedLine.equals(remove)) break;
+                cnt++;
+            }
+            reader.close();
+            if (curr != null) {
+                System.out.println("Removing: " + username + " " + phoneNumber);
+                database.removeLines(cnt, 1);
+            } else System.out.println("Found no user: " + username + " " + phoneNumber);
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            readWriteLock.writeUnlock();
+        }
+    }
+
+}
+
+class DatabaseFile {
+    private String file;
+    DatabaseFile(String databaseName){
+        this.file = databaseName;
+    }
+
+    public void removeLines(int startLine, int numLines) {
+        try {
+            BufferedReader br = new BufferedReader(new FileReader(file));
+            StringBuilder sb = new StringBuilder("");
+            int linenumber = 0;
+            String line;
+
+            while ((line = br.readLine()) != null) {
+                if (linenumber < startLine || linenumber >= startLine + numLines)
+                    sb.append(line).append("\n");
+                linenumber++;
+            }
+            if (startLine + numLines > linenumber)
+                System.out.println("End of file.");
+            br.close();
+
+            FileWriter fw = new FileWriter(file);
+            fw.write(sb.toString());
+            fw.close();
+        } catch (Exception e) {
+            System.out.println("Something went wrong: " + e.getMessage());
+        }
+    }
+}
+
+public class Main {
+    private static Random random = new Random();
+    private static final String file = "database.txt";
+
+    public static void main(String[] args) throws IOException {
+        DatabaseFile db = new DatabaseFile(file);
+
+        FileWriter fileWriter = new FileWriter(file); // Corrected FileWriter usage
+
+        DatabaseController dbController = new DatabaseController(db);
+
+        startAllRunners(dbController);
+    }
+
+    private static void startAllRunners(DatabaseController dbController) {
+        Runner readUsername = new Runner(3, () -> {
+            dbController.getUsername(randomPhone());
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        readUsername.startAll();
+
+        Runner readPhone = new Runner(3, () -> {
+            dbController.getPhoneNumbers(randomUsername());
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        readPhone.startAll();
+
+        Runner addUser = new Runner(3, () -> {
+            dbController.addRecord(randomUsername(), randomPhone());
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        addUser.startAll();
+
+        Runner removeUser = new Runner(3, () -> {
+            dbController.deleteRecord(randomUsername(), randomPhone());
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        removeUser.startAll();
+    }
+
+    private static String randomPhone() {
+        return Integer.toString(Math.abs(random.nextInt()) % 10);
+    }
+
+    private static String randomUsername() {
+        int leftLimit = 97;
+        int rightLimit = 122;
+        int targetStringLength = 1;
+        return random.ints(leftLimit, rightLimit + 1)
+                .limit(targetStringLength)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString();
+    }
+
+    public static class Runner {
+        private ThreadPoolExecutor executor;
+        private Runnable runnable;
+
+        public Runner(int n, Runnable runnable) {
+            this.runnable = runnable;
+            executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(n);
+        }
+
+        public void startAll() {
+            executor.execute(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    runnable.run();
+                }
+            });
+        }
+    }
+}
